@@ -2,7 +2,7 @@
 pragma solidity 0.8.17;
 import "hardhat/console.sol";
 
-interface IERC4907 {
+interface IERC721{
     event Transfer(
         address indexed _from,
         address indexed _to,
@@ -17,11 +17,6 @@ interface IERC4907 {
         address indexed _owner,
         address indexed _operator,
         bool _approved
-    );
-    event UpdateUser(
-        uint256 indexed tokenId,
-        address indexed user,
-        uint64 expires
     );
 
     function balanceOf(address _owner) external view returns (uint256);
@@ -45,6 +40,19 @@ interface IERC4907 {
         view
         returns (bool);
 
+    function _mint(address to, uint id) external;
+
+    function _burn(uint id) external;
+
+}
+
+interface IERC4907 is IERC721 {
+    event UpdateUser(
+        uint256 indexed tokenId,
+        address indexed user,
+        uint64 expires
+    );
+
     function setUser(
         uint256 tokenId,
         address user,
@@ -55,23 +63,12 @@ interface IERC4907 {
 
     function userExpires(uint256 tokenId) external view returns (uint256);
 
-    function _mint(address to, uint id) external;
-
-    function _burn(uint id) external;
 }
-
-contract ERC4907 is IERC4907 {
-    struct Lessee {
-        address user;
-        uint expires;
-    }
-
+contract ERC721 is IERC721{
     mapping(address => uint) public _balanceOf;
     mapping(uint => address) public _ownerOf;
     mapping(uint => address) public _approved;
     mapping(address => mapping(address => bool)) public _isApprovedForAll;
-
-    mapping(uint256 => Lessee) internal lessees;
 
     function balanceOf(address _owner) external view returns (uint256) {
         require(_owner != address(0), "invalid address");
@@ -101,10 +98,11 @@ contract ERC4907 is IERC4907 {
             "Not Allowed!"
         );
 
-        require(
-            block.timestamp > lessees[_tokenId].expires,
-            "NFT Rented cannot transfer"
-        );
+        // require(
+        //     block.timestamp > lessees[_tokenId].expires,
+        //     "NFT Rented cannot transfer"
+        // );
+        _beforeTokenTransfer(_tokenId);
 
         _balanceOf[_from]--;
         _balanceOf[_to]++;
@@ -166,6 +164,18 @@ contract ERC4907 is IERC4907 {
         return _isApprovedForAll[_owner][_operator];
     }
 
+    function _beforeTokenTransfer(uint256 tokenId) internal virtual {}
+
+}
+
+contract ERC4907 is ERC721, IERC4907 {
+    struct Lessee {
+        address user;
+        uint expires;
+    }
+
+    mapping(uint256 => Lessee) internal lessees;
+
     function setUser(
         uint256 tokenId,
         address user,
@@ -197,25 +207,39 @@ contract ERC4907 is IERC4907 {
     function userExpires(uint256 tokenId) public view returns (uint256) {
         return lessees[tokenId].expires;
     }
+
+    function _beforeTokenTransfer(uint256 tokenId) internal virtual override{
+        require(
+            block.timestamp > lessees[tokenId].expires,
+            "NFT Rented cannot transfer because it is Rented!"
+        );
+
+        console.log("child contract before executed");
+    }
 }
 
 contract NFTMarketPlace {
     struct Item {
         address seller;
-        address tokenContract;
+        // address tokenContract;
         uint tokenId;
         uint price;
         bool status;
     }
-    mapping(uint => Item) public market;
+
+    mapping(uint => uint) public marketMappingKeys;
+    mapping(uint => bool) public alreadyExixts;
+    Item[] public market;
     address payable public owner;
     uint public itemId;
     uint public listingfee;
+    address public tokenContract;
 
-    constructor() {
+    constructor(address _tokenContract, uint _listingfee) {
         owner = payable(msg.sender);
         itemId = 0;
-        listingfee = 1 wei;
+        listingfee = _listingfee;
+        tokenContract = _tokenContract;
     }
 
     event NFTListed(
@@ -227,74 +251,75 @@ contract NFTMarketPlace {
     );
 
     function listNFT(
-        address _tokenContract,
+        // address _tokenContract,
         uint _tokenId,
         uint _price
-    ) external payable returns (uint) {
-        address tokenOwner = IERC4907(_tokenContract).ownerOf(_tokenId);
+    ) external payable {
+        address tokenOwner = IERC4907(tokenContract).ownerOf(_tokenId);
 
         require(
             tokenOwner == msg.sender ||
-                IERC4907(_tokenContract).isApprovedForAll(
+                IERC4907(tokenContract).isApprovedForAll(
                     tokenOwner,
                     msg.sender
                 ),
             "Youre not owner"
         );
         require(
-            IERC4907(_tokenContract).getApproved(_tokenId) == address(this),
+            IERC4907(tokenContract).getApproved(_tokenId) == address(this),
             "Approve this contract first"
         );
         require(msg.value >= listingfee, "Not Enough Listing Fee");
+        require(alreadyExixts[_tokenId] == false,"already Listed For sale");
 
         Item memory item = Item({
             seller: msg.sender,
-            tokenContract: _tokenContract,
             tokenId: _tokenId,
             price: _price,
             status: true
         });
 
-        // IERC4907(_tokenContract).approve(address(this), _tokenId);
+        marketMappingKeys[_tokenId] = itemId;
+        market.push(item);
+        alreadyExixts[_tokenId] = true;
 
-        market[itemId] = item;
-
-        emit NFTListed(msg.sender, _tokenContract, _tokenId, _price, itemId);
-        uint currentId = itemId;
+        emit NFTListed(msg.sender, tokenContract, _tokenId, _price, itemId);
         ++itemId;
-        return currentId;
     }
 
-    function buyNFT(uint _itemId) external payable {
+    function buyNFT(uint _tokenId) external payable {
         require(
-            msg.value >= market[_itemId].price,
+            msg.value >= market[marketMappingKeys[_tokenId]].price,
             "Insufficient balance Transfered!"
         );
-        require(market[_itemId].status, "Already sold");
-        IERC4907(market[_itemId].tokenContract).transferFrom(
-            market[_itemId].seller,
+        require(market[marketMappingKeys[_tokenId]].status, "Already sold");
+        IERC4907(tokenContract).transferFrom(
+            market[marketMappingKeys[_tokenId]].seller,
             msg.sender,
-            market[_itemId].tokenId
+            market[marketMappingKeys[_tokenId]].tokenId
         );
 
-        market[_itemId].status = false;
-        (bool success, ) = market[_itemId].seller.call{value: msg.value}("");
+        market[marketMappingKeys[_tokenId]].status = false;
+        delete alreadyExixts[_tokenId];
+        (bool success, ) = market[marketMappingKeys[_tokenId]].seller.call{value: msg.value}("");
         require(success, "Failed to send funds to the seller");
 
-        delete market[_itemId];
+        // delete market[marketMappingKeys[_tokenId]];
     }
 
-    function deleteNFT(uint _itemId) public {
-        require(msg.sender == market[_itemId].seller, "not auhorized");
-        delete market[_itemId];
+    function deleteNFT(uint _tokenId) public {
+        require(msg.sender == market[marketMappingKeys[_tokenId]].seller, "not auhorized");
+        delete alreadyExixts[_tokenId];
+        delete market[marketMappingKeys[_tokenId]];
     }
 
-    function updateNFT(uint _itemId) public {
+    function updateNFT(uint _tokenId) public {
         require(
-            msg.sender == market[_itemId].seller || msg.sender == owner,
+            msg.sender == market[marketMappingKeys[_tokenId]].seller || msg.sender == owner,
             "not auhorized"
         );
-        market[_itemId].status = false;
+        market[marketMappingKeys[_tokenId]].status = false;
+         delete alreadyExixts[_tokenId];
     }
 
     function withraw() public {
@@ -302,4 +327,9 @@ contract NFTMarketPlace {
         (bool success, ) = owner.call{value: address(this).balance}("");
         require(success, "Failed to send funds to the Owner");
     }
+
+    function getAllItemsForSale() public view returns (Item[] memory) {
+        return market;
+    }
+
 }

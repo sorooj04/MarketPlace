@@ -13,4 +13,7 @@ module.exports = {
       accounts: [PRIVATE_KEY],
     },
   },
+  etherscan: {
+    apiKey: "PXEYA7C6PACQVMFGB8KU1463C571FJUS4G"
+  }
 };

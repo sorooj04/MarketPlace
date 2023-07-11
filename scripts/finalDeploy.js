@@ -9,7 +9,7 @@ async function main() {
   console.log("4907 Contract Address: ", contract.address);
 
   const NFTMarketPlace = await hre.ethers.getContractFactory("NFTMarketPlace");
-  const marketContract = await NFTMarketPlace.deploy();
+  const marketContract = await NFTMarketPlace.deploy(contract.address,1);
   await marketContract.deployed();
   console.log("NFTMarketPlace Contract Address: ", marketContract.address);
 }
